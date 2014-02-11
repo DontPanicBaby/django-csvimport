@@ -6,15 +6,22 @@ import uuid
 import os
 import json
 import unicodecsv
+from itertools import chain
 
 @csrf_exempt
 def csvimport(request, label):
-    if not request.POST: 
+    if not request.method == 'POST': 
         raise Http404
     mod_name, form_name = settings.CSV_FORMS[label].rsplit('.',1)
     mod = importlib.import_module(mod_name)
     form = getattr(mod, form_name)()
-    headers = map( lambda x: x.upper(), form.fields.keys())
+    headers = map(
+        lambda x: x.upper(), 
+        chain(
+            form.fields.keys(), 
+            [unicode(f.label) for f in form.fields.values() if not f.widget.is_hidden]
+        )
+    )
     path_dir = os.path.join( settings.MEDIA_ROOT, 'csvimport')
     if not os.path.exists(path_dir):
         os.mkdir(path_dir)
@@ -31,7 +38,7 @@ def csvimport(request, label):
             if n > 4: break
             if n == 0: 
                 for col, item in enumerate( row ):
-                    if  item.upper() in headers:
+                    if item.upper() in headers:
                         answ['headers'].append( (col, item.lower()) )
             else: answ['rows'].append(row)
     return HttpResponse( json.dumps( answ ) )
@@ -39,6 +46,7 @@ def csvimport(request, label):
 
 @csrf_exempt
 def csvdump(request, label):
+#     return HttpResponse( json.dumps({'added': 11 }) )
     if not request.POST.has_key('file') or not request.POST.has_key('data') : 
         return HttpResponse( json.dumps({'critical': "Not file id" }) )
     file_id = request.POST['file']
@@ -59,19 +67,19 @@ def csvdump(request, label):
     with open(file_name, 'r') as stream:
         csv = unicodecsv.reader(stream, encoding='utf-8', delimiter=getattr(settings, 'CSV_DELIMITER', ';'))
         for n, row in enumerate( csv ):
-            if n == 0:continue
+            if n == 0: continue
             obj = {}
             for ind, i in enumerate(row):
                 try:  obj[ mapping[ind] ] = i
                 except KeyError: pass
             form_obj = form(obj)
-            print form_obj.is_valid() 
-            components.append(obj)
+            if form_obj.is_valid():
+                components.append(obj)
                     
                     
-    #mod_name, func_name = settings.CSV_DELEGATE.rsplit('.',1)
-    #mod = importlib.import_module(mod_name)
-    #func = getattr(mod, func_name)
-    #func( components )
-    return HttpResponse( '' )
+    mod_name, func_name = settings.CSV_DELEGATE[label].rsplit('.',1)
+    mod = importlib.import_module(mod_name)
+    func = getattr(mod, func_name)
+    added = func(components, request)
+    return HttpResponse( json.dumps({'added': added }) )
     
